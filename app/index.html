@@ -1,15 +1,35 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="ink" data-density="compact">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Weeknight Kitchen</title>
-<link rel="stylesheet" href="style.css">
+<meta name="description" content="An offline statistics atlas of Japan: 47 prefectures from the 2020 census and World Bank time series.">
+<title>Japan Ledger · Public Data Observatory</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ff704d'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='14' font-weight='700' text-anchor='middle' fill='white'%3EJP%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
 <script type="module" src="main.js"></script>
 </head>
 <body>
-<header><a href="#/">Weeknight Kitchen</a></header>
-<main id="app"></main>
-<footer>Six recipes for busy evenings.</footer>
+<a class="skip" href="#app">Skip to content</a>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="#/overview" aria-label="Japan Ledger, overview">
+      <span class="brand-mark" aria-hidden="true">JP</span>
+      <span><strong>Japan Ledger</strong><small>Public data observatory</small></span>
+    </a>
+    <div class="top-actions">
+      <button type="button" id="theme-toggle" class="chrome-btn" aria-pressed="false">Paper</button>
+      <button type="button" id="density-toggle" class="chrome-btn" aria-pressed="true">Roomy</button>
+    </div>
+  </header>
+  <div class="body">
+    <nav id="nav" class="sidenav" aria-label="Atlas sections"></nav>
+    <main id="app" tabindex="-1"></main>
+  </div>
+  <footer class="foot">
+    <span>Offline edition · 2020 census prefecture table · World Bank WDI</span>
+    <span>Every figure carries its own source year</span>
+  </footer>
+</div>
 </body>
 </html>
