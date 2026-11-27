@@ -20,7 +20,7 @@ function lineTicks(lo, hi, count = 5) {
 export function lineChart(sets, opts = {}) {
   const width = opts.width ?? 720;
   const height = opts.height ?? 240;
-  const pad = { l: opts.padLeft ?? 58, r: 14, t: 16, b: 32 };
+  const pad = { l: opts.padLeft ?? 58, r: opts.padRight ?? 14, t: opts.padTop ?? 16, b: opts.padBottom ?? 32 };
   const clean = sets
     .map((s) => ({ ...s, pts: (s.values ?? []).filter((p) => finite(p[1]) && p[0] >= (opts.start ?? -Infinity) && p[0] <= (opts.end ?? Infinity)) }))
     .filter((s) => s.pts.length);
@@ -33,8 +33,10 @@ export function lineChart(sets, opts = {}) {
   const x1 = Math.max(...years);
   const px = (year) => pad.l + ((year - x0) / (x1 - x0 || 1)) * (width - pad.l - pad.r);
   const py = (value) => pad.t + (1 - (Number(value) - y0) / (y1 - y0 || 1)) * (height - pad.t - pad.b);
-  const gridY = Array.from({ length: 5 }, (_, i) => y0 + ((y1 - y0) * i) / 4);
-  const gridX = [...new Set(lineTicks(x0, x1))];
+  const yTicks = opts.yTicks ?? 5;
+  const xTicks = opts.xTicks ?? 5;
+  const gridY = Array.from({ length: yTicks }, (_, i) => y0 + ((y1 - y0) * i) / (yTicks - 1));
+  const gridX = [...new Set(lineTicks(x0, x1, xTicks))];
   const aria = opts.aria ?? `${clean.map((s) => s.name).join(' and ')} over ${x0} to ${x1}`;
   let out = `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(aria)}"><title>${esc(aria)}</title>`;
   out += gridY
@@ -149,4 +151,20 @@ export function tileCartogram(groups, rows, metric, qmap, selected) {
       return `<div class="map-region"><div class="map-region-title">${esc(g.name)}<span>${members.length}</span></div><div class="map-tiles">${tiles}</div></div>`;
     })
     .join('')}</div>`;
+}
+
+export function prefHeatmap(rows, metric, qmap) {
+  if (!rows.length) return '<div class="empty">No prefectures in view.</div>';
+  const ordered = [...rows].sort((a, b) => a.code - b.code);
+  const values = ordered.map((p) => metric.value(p));
+  const tiles = ordered
+    .map((p) => {
+      const value = metric.value(p);
+      const q = qmap.get(p.code) ?? 0;
+      const abbr = p.nameEn.replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase();
+      return `<span class="mini-tile q${q}" title="${esc(p.nameEn)} (${p.code}): ${esc(metric.format(value))}"><b>${abbr}</b></span>`;
+    })
+    .join('');
+  const ramp = Array.from({ length: 6 }, (_, i) => `<i class="q${i}"></i>`).join('');
+  return `<div class="mini-heat">${tiles}</div><div class="mini-heat-legend"><span>${esc(metric.format(Math.min(...values)))}</span><span class="ramp">${ramp}</span><span>${esc(metric.format(Math.max(...values)))}</span></div>`;
 }

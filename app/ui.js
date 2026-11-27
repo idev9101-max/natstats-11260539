@@ -1,6 +1,9 @@
 import { meta, indicators, series, countryRows } from './data.js';
 import { prefectures, regionGroups, prefMetrics, regionName, selectPrefs, aggregatePrefs, quantiles } from './regions.js';
-import { lineChart, barChart, scatterChart, sparkline, tileCartogram } from './charts.js';
+import { lineChart, barChart, scatterChart, sparkline, tileCartogram, prefHeatmap } from './charts.js';
+import {
+  decadeTrends, peakOf, countryStanding, standingText, genderLeaders, genderFollowers, genderRatio, nationalGender, windowStats,
+} from './analytics.js';
 import { esc, fmtInt, fmtCompact, fmtFixed, fmtValue, fmtSigned, sliceYears, years } from './format.js';
 import { routeMeta } from './router.js';
 
@@ -27,6 +30,27 @@ function kpi(title, value, detail, source, spark = [], color = 'var(--accent)') 
 
 function panel(title, body, source, extra = '', head = '') {
   return `<section class="panel ${extra}"><div class="panel-head"><h2>${esc(title)}</h2>${head}</div>${body}${source ? note(...source) : ''}</section>`;
+}
+
+function rankList(items, { format = (v) => esc(v), color = 'var(--accent)' } = {}) {
+  const values = items.map((i) => Number(i.value));
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  return `<ol class="rank-list">${items
+    .map(
+      (item, i) => `<li><span class="rl-rank">${String(i + 1).padStart(2, '0')}</span><span class="rl-name">${esc(item.label)}</span><span class="rl-bar"><i style="width:${fmtFixed(((Number(item.value) - lo) / (hi - lo || 1)) * 100 + 8, 1)}%;background:${color}"></i></span><b>${format(item.value)}</b></li>`,
+    )
+    .join('')}</ol>`;
+}
+
+function derivedCard(label, value, detail, spark = [], color = 'var(--accent)') {
+  return `<div class="derived"><span>${esc(label)}</span><strong>${esc(value)}</strong><div>${detail}</div>${sparkline(spark, { color, width: 70, height: 20 })}</div>`;
+}
+
+function standingCard(label, code, info, options = {}, color = 'var(--accent)') {
+  const s = countryStanding(code, options);
+  if (!s) return '';
+  return `<div class="peer-card"><span>${esc(label)} · ${s.year}</span><strong style="color:${color}">${esc(fmtValue(s.value, info))}</strong><em>${esc(standingText(s))}</em></div>`;
 }
 
 function selectControl(id, label, options, value) {
@@ -86,29 +110,71 @@ function scatter(codes, iso) {
 
 function overview() {
   const pop = latest('SP.POP.TOTL');
-  const gdp = latest('NY.GDP.MKTP.CD');
+  const gdpPc = latest('NY.GDP.PCAP.CD');
   const life = latest('SP.DYN.LE00.IN');
-  const unemp = latest('SL.UEM.TOTL.ZS');
-  const popSeries = sliceYears(series['SP.POP.TOTL'], 2000, 2025);
-  const gdpSeries = sliceYears(series['NY.GDP.PCAP.CD'], 1990, 2025);
-  const topPrefs = selectPrefs({ metric: 'population2020', limit: 8 });
-  const regionRows = regionGroups.map((g) => {
-    const a = aggregatePrefs(prefectures.filter((p) => g.codes.includes(p.code)));
-    return `<tr><th>${esc(g.name)}</th><td>${a.count}</td><td>${fmtInt(a.population)}</td><td>${fmtFixed(a.changePct, 1)}%</td><td>${fmtFixed(a.averageAge, 1)}</td></tr>`;
+  const growth = latest('SP.POP.GROW');
+  const gdpGrowth = latest('NY.GDP.MKTP.KD.ZG');
+  const gender = nationalGender();
+  const shrinking = prefectures.filter((p) => p.change2015 < 0).length;
+  const peakPop = peakOf('SP.POP.TOTL');
+  const regionPops = regionGroups.map((g) => aggregatePrefs(prefectures.filter((p) => g.codes.includes(p.code))).population);
+  const heatMetric = prefMetrics.changePct2015;
+  const heatQ = quantiles(prefectures, 'changePct2015');
+  const fastestFall = selectPrefs({ metric: 'changePct2015', direction: 'asc', limit: 1 })[0];
+  const fastestRise = selectPrefs({ metric: 'changePct2015', limit: 1 })[0];
+  const ladder = [
+    ...selectPrefs({ metric: 'changePct2015', limit: 5 }),
+    ...selectPrefs({ metric: 'changePct2015', direction: 'asc', limit: 5 }),
+  ].sort((a, b) => b.changePct2015 - a.changePct2015);
+  const densityLeaders = selectPrefs({ metric: 'density', limit: 6 });
+  const ageLeaders = selectPrefs({ metric: 'averageAge', limit: 6 });
+  const genderRows = [...genderLeaders(3), ...genderFollowers(3)].map((p) => ({
+    label: p.nameEn,
+    value: genderRatio(p),
+  }));
+  const popDecades = decadeTrends('SP.POP.TOTL');
+  const gdpByStart = new Map(decadeTrends('NY.GDP.PCAP.CD').map((d) => [d.start, d]));
+  const decadeRows = popDecades.map((d) => {
+    const g = gdpByStart.get(d.start);
+    return `<tr><th>${d.start}–${d.end}</th><td class="${d.changePct < 0 ? 'neg' : 'pos'}">${fmtSigned(d.changePct, 1)}%</td><td>${g ? fmtSigned(g.changePct, 1) + '%' : '—'}</td></tr>`;
   });
-  return `${pageHead(routeMeta('overview'), 'CENSUS 2020 · WDI LATEST')}
-  <div class="kpi-grid">
-    ${kpi('Census residents · 2020', fmtCompact(census.population), `47 prefectures · ${fmtInt(femaleTotal)} female residents in table`, [CENSUS, '2020'], sliceYears(series['SP.POP.TOTL'], 2010, 2020).map((p) => p[1]))}
-    ${kpi('Population · WDI', fmtValue(pop[1], indicators['SP.POP.TOTL']), `${fmtSigned(at('SP.POP.GROW', 2025), 3)}% annual growth in ${pop[0]}`, [WDI, `${pop[0]}`], sliceYears(series['SP.POP.TOTL'], 2000, 2025).map((p) => p[1]))}
-    ${kpi('GDP · current US$', fmtValue(gdp[1], indicators['NY.GDP.MKTP.CD']), `Growth ${fmtValue(latest('NY.GDP.MKTP.KD.ZG')[1], indicators['NY.GDP.MKTP.KD.ZG'])} in ${gdp[0]}`, [WDI, `${gdp[0]}`], gdpSeries.map((p) => p[1]), 'var(--gold)')}
-    ${kpi('Life expectancy', fmtValue(life[1], indicators['SP.DYN.LE00.IN']), `Fertility ${fmtValue(latest('SP.DYN.TFRT.IN')[1], indicators['SP.DYN.TFRT.IN'])} in ${life[0]}`, [WDI, `${life[0]}`], sliceYears(series['SP.DYN.LE00.IN'], 1990, 2024).map((p) => p[1]), 'var(--teal)')}
+  return `<header class="page-head dash-head">
+    <div><div class="eyebrow">01 / CENSUS 2020 · WDI LATEST</div><h1>Japan data observatory</h1><p>47 prefectures · ${Object.keys(indicators).length} indicators · two sources, each figure dated.</p></div>
+    <div class="head-stats">
+      <div><b>${fmtInt(pop[1])}</b><span>WDI population · ${pop[0]}</span></div>
+      <div><b>${fmtCompact(census.population)}</b><span>Census total · 2020</span></div>
+      <div><b>${peakPop[0]} · ${fmtCompact(peakPop[1])}</b><span>Population peak · WDI</span></div>
+    </div>
+  </header>
+  <div class="dash-kpis">
+    ${kpi('Census residents · 2020', fmtCompact(census.population), `47 prefectures · ${fmtSigned(census.changePct, 2)}% since 2015`, [CENSUS, '2020'], regionPops)}
+    ${kpi('Population · WDI', fmtCompact(pop[1]), `${fmtSigned(growth[1], 3)}% in ${growth[0]}`, [WDI, `${pop[0]}`], sliceYears(series['SP.POP.TOTL'], 2000, 2025).map((p) => p[1]))}
+    ${kpi('GDP / person', fmtValue(gdpPc[1], indicators['NY.GDP.PCAP.CD']), `${standingText(countryStanding('NY.GDP.PCAP.CD'))} · ${gdpGrowth[0]} growth ${fmtValue(gdpGrowth[1], indicators['NY.GDP.MKTP.KD.ZG'])}`, [WDI, `${gdpPc[0]}`], sliceYears(series['NY.GDP.PCAP.CD'], 1990, 2025).map((p) => p[1]), 'var(--gold)')}
+    ${kpi('Life expectancy', fmtValue(life[1], indicators['SP.DYN.LE00.IN']), `${standingText(countryStanding('SP.DYN.LE00.IN'))} · ${life[0]}`, [WDI, `${life[0]}`], sliceYears(series['SP.DYN.LE00.IN'], 1990, 2024).map((p) => p[1]), 'var(--teal)')}
+    ${kpi('Prefectures shrinking', `${shrinking} / 47`, `${fmtSigned(census.change, 0)} residents · 2015–20`, [CENSUS, '2015–2020'], prefectures.map((p) => p.changePct2015), 'var(--coral)')}
+    ${kpi('Female share · census', `${fmtFixed(gender.share, 2)}%`, `${fmtFixed(gender.per100, 1)} women per 100 men`, [CENSUS, '2020'], prefectures.map((p) => (100 * p.female2020) / p.population2020), 'var(--series-3)')}
   </div>
-  <div class="grid">
-    ${panel('Population, 1960–2025', lineChart([{ name: 'Japan population', values: series['SP.POP.TOTL'], color: 'var(--accent)' }], { height: 218, kind: 'integer' }), [WDI, '1960–2025 · latest 2025'], 'span-7')}
-    ${panel('Largest prefectures, 2020', barChart(topPrefs.map((p) => ({ label: p.nameEn, value: p.population2020 })), { format: fmtInt, labelChars: 16, rowH: 23, width: 560 }), [CENSUS, '2020'], 'span-5')}
-    ${panel('GDP per person, 1990–2025', lineChart([{ name: 'GDP per capita', values: series['NY.GDP.PCAP.CD'], color: 'var(--gold)' }], { start: 1990, height: 190, kind: 'dollar' }), [WDI, '1990–2025 · latest 2025'], 'span-7')}
-    ${panel(`Unemployment, ${unemp[0]}`, lineChart([{ name: 'Unemployment', values: sliceYears(series['SL.UEM.TOTL.ZS'], 1991, 2025), color: 'var(--teal)' }], { height: 190, kind: 'percent' }), [WDI, `1991–${unemp[0]}`], 'span-5')}
-    ${panel('Eight regional blocks', table(['Region', 'Pref.', 'Population 2020', 'Change 2015–20', 'Average age'], regionRows), [CENSUS, '2020; change from 2015'], 'span-12')}
+  <div class="dash-grid">
+    ${panel('National series · 1960–2025', `<div class="mini-series">
+      <div class="mini-series-title"><span>Population</span><b>${fmtCompact(pop[1])} · ${pop[0]}</b></div>
+      ${lineChart([{ name: 'Japan population', values: series['SP.POP.TOTL'], color: 'var(--accent)' }], { width: 420, height: 74, padLeft: 44, padTop: 6, padBottom: 17, yTicks: 3, xTicks: 4, kind: 'integer' })}
+      <div class="mini-series-title"><span>GDP per person</span><b>${fmtValue(gdpPc[1], indicators['NY.GDP.PCAP.CD'])} · ${gdpPc[0]}</b></div>
+      ${lineChart([{ name: 'GDP per capita', values: series['NY.GDP.PCAP.CD'], color: 'var(--gold)' }], { width: 420, height: 74, padLeft: 44, padTop: 6, padBottom: 17, yTicks: 3, xTicks: 4, kind: 'dollar' })}
+    </div>`, [WDI, 'Population and GDP per person · 1960–2025'], 'dpanel a-series')}
+    ${panel('Change ladder · 2015–20', barChart(ladder.map((p) => ({ label: p.nameEn, value: p.changePct2015, color: p.changePct2015 < 0 ? 'var(--coral)' : 'var(--teal)' })), { width: 330, labelW: 96, valueW: 54, rowH: 15, labelChars: 13, format: (v) => `${fmtSigned(v, 1)}%`, aria: 'Fastest growing and fastest shrinking prefectures, 2015 to 2020' }), [CENSUS, 'Percent change from 2015 · top 5 and bottom 5'], 'dpanel a-ladder', `<span class="panel-tag">10 pref.</span>`)}
+    ${panel('47-prefecture heatmap', `<div class="heat-callout"><span>Fall <b>${esc(fastestFall.nameEn)} ${fmtSigned(fastestFall.changePct2015, 1)}%</b></span><span>Rise <b>${esc(fastestRise.nameEn)} ${fmtSigned(fastestRise.changePct2015, 1)}%</b></span></div>${prefHeatmap(prefectures, heatMetric, heatQ)}`, [CENSUS, '2020 · code order · 2015–2020 change'], 'dpanel a-heat', `<span class="panel-tag">47 / 47</span>`)}
+    ${panel(`Decades · peak ${peakPop[0]}`, table(['Years', 'People', 'GDP / person'], decadeRows, 'micro-table'), [WDI, 'Decade endpoints from embedded series'], 'dpanel b-decades')}
+    ${panel('Density leaders', barChart(densityLeaders.map((p) => ({ label: p.nameEn, value: p.density })), { width: 245, labelW: 76, valueW: 50, rowH: 20, labelChars: 11, format: fmtInt, aria: 'Highest population density among prefectures, 2020' }), [CENSUS, '2020 · residents per km²'], 'dpanel b-density', `<span class="panel-tag">national ${fmtFixed(census.density, 0)}/km²</span>`)}
+    ${panel('Age leaders', rankList(ageLeaders.map((p) => ({ label: p.nameEn, value: p.averageAge })), { format: (v) => `${fmtFixed(v, 1)} y`, color: 'var(--gold)' }), [CENSUS, '2020 · population-weighted national average ' + fmtFixed(census.averageAge, 1)], 'dpanel b-age')}
+    ${panel('Gender balance', rankList(genderRows, { format: (v) => fmtFixed(v, 1), color: 'var(--teal)' }), [CENSUS, '2020 · women per 100 men · top 3 and bottom 3'], 'dpanel b-gender', `<span class="panel-tag">${fmtFixed(gender.per100, 1)} / 100</span>`)}
+    ${panel('Japan against 15 countries', `<div class="peer-strip">
+      ${standingCard('Life expectancy', 'SP.DYN.LE00.IN', indicators['SP.DYN.LE00.IN'], {}, 'var(--teal)')}
+      ${standingCard('GDP / person', 'NY.GDP.PCAP.CD', indicators['NY.GDP.PCAP.CD'], {}, 'var(--gold)')}
+      ${standingCard('Unemployment', 'SL.UEM.TOTL.ZS', indicators['SL.UEM.TOTL.ZS'], { lowerBetter: true }, 'var(--teal)')}
+      ${standingCard('Fertility', 'SP.DYN.TFRT.IN', indicators['SP.DYN.TFRT.IN'], { lowerBetter: true }, 'var(--coral)')}
+      ${standingCard('CO₂ / person', 'EN.GHG.CO2.PC.CE.AR5', indicators['EN.GHG.CO2.PC.CE.AR5'], {}, 'var(--coral)')}
+      ${standingCard('Renewable power', 'EG.ELC.RNEW.ZS', indicators['EG.ELC.RNEW.ZS'], {}, 'var(--series-3)')}
+    </div>`, [WDI, 'Latest available year shown in each card'], 'dpanel c-peers', `<span class="panel-tag">rank by value</span>`)}
   </div>`;
 }
 
@@ -241,6 +307,10 @@ function regions(state) {
   const qmap = quantiles(rows, state.prefMetric);
   const selected = prefectures.find((p) => p.code === state.prefSelected) ?? rows[0] ?? prefectures[0];
   const agg = aggregatePrefs(rows);
+  const changeLeader = selectPrefs({ metric: 'changePct2015', direction: 'asc', limit: 1 })[0];
+  const densityLeader = selectPrefs({ metric: 'density', limit: 1 })[0];
+  const ageLeader = selectPrefs({ metric: 'averageAge', limit: 1 })[0];
+  const genderLeader = genderLeaders(1)[0];
   const regionTable = regionGroups.map((g) => {
     const a = aggregatePrefs(prefectures.filter((p) => g.codes.includes(p.code)));
     return `<tr><th>${esc(g.name)}</th><td>${a.count}</td><td>${fmtInt(a.population)}</td><td>${fmtSigned(a.changePct, 1)}%</td><td>${fmtFixed(a.density, 1)}</td><td>${fmtFixed(a.averageAge, 1)}</td></tr>`;
@@ -254,6 +324,12 @@ function regions(state) {
   </div>`;
   return `${pageHead(routeMeta('regions'), '47 PREFECTURES · 2020')}
   ${controls}
+  <div class="insight-strip">
+    <div><span>Fastest decline · 2015–20</span><b>${esc(changeLeader.nameEn)} ${fmtSigned(changeLeader.changePct2015, 1)}%</b></div>
+    <div><span>Density leader · 2020</span><b>${esc(densityLeader.nameEn)} ${fmtInt(densityLeader.density)}/km²</b></div>
+    <div><span>Oldest · average age</span><b>${esc(ageLeader.nameEn)} ${fmtFixed(ageLeader.averageAge, 1)} y</b></div>
+    <div><span>Highest female ratio</span><b>${esc(genderLeader.nameEn)} ${fmtFixed(genderRatio(genderLeader), 1)} / 100</b></div>
+  </div>
   <div class="kpi-grid four">
     ${kpi('Showing', `${rows.length} / 47`, `${esc(regionGroups.find((g) => g.id === state.prefRegion)?.name ?? 'All regions')} · ${esc(metric.short)}`, [CENSUS, '2020'], [])}
     ${kpi('Population in view', fmtCompact(agg.population), `${fmtSigned(agg.change, 0)} since 2015`, [CENSUS, '2015–2020'], [])}
@@ -290,6 +366,7 @@ function explorer(state) {
   const indexed = state.explorerIndex ? sliced.map(([y, v]) => [y, (100 * v) / base]) : sliced;
   const fmt = (v) => (state.explorerIndex ? `${fmtFixed(v, 1)}` : fmtValue(v, info));
   const values = sliced.map((p) => p[1]);
+  const stats = windowStats(code, start, end);
   const first = values[0];
   const last = values[values.length - 1];
   const min = Math.min(...values);
@@ -310,6 +387,12 @@ function explorer(state) {
   </div>`;
   return `${pageHead(routeMeta('explorer'), 'LOCAL TIME SERIES')}
   ${controls}
+  <div class="derived-strip">
+    ${derivedCard('Window change', stats && stats.changePct !== null ? `${fmtSigned(stats.changePct, 1)}%` : '—', `${start}–${end} · ${fmtValue(first, info)} → ${fmtValue(last, info)}`, values, 'var(--accent)')}
+    ${derivedCard('Annualised rate', stats && stats.annualPct !== null ? `${fmtSigned(stats.annualPct, 2)}% / yr` : '—', stats ? `${stats.first[0]}–${stats.last[0]} · ${stats.span} years` : 'Not defined for this window', values, 'var(--gold)')}
+    ${derivedCard('Peak in window', stats ? `${stats.peak[0]} · ${fmtValue(stats.peak[1], info)}` : '—', 'Highest embedded observation in view', values, 'var(--teal)')}
+    ${derivedCard('Trough in window', stats ? `${stats.trough[0]} · ${fmtValue(stats.trough[1], info)}` : '—', 'Lowest embedded observation in view', values, 'var(--series-3)')}
+  </div>
   <div class="grid">
     ${panel(`${info.short} · ${start}–${end}`, chart, [WDI, `${info.label} · ${available[0]}–${available[available.length - 1]} · observations ${sliced.length}`], 'span-8')}
     ${panel('Selected window', table(['Statistic', 'Value', 'Unit'], [
@@ -355,8 +438,8 @@ function rankings(state) {
   return `${pageHead(routeMeta('rankings'), 'RANKINGS · COMPARISON')}
   ${controls}
   <div class="grid">
-    ${panel(`${metric.label} · top ${rows.length}`, table([sortButton(state, 'rank', '#'), sortButton(state, 'name', 'Prefecture'), sortButton(state, 'region', 'Region'), sortButton(state, 'value', metric.short), sortButton(state, 'code', 'Population'), '<span>Average age</span>'], body, 'rank-table'), [CENSUS, '2020 · 2015 comparison for change metric'], 'span-8')}
-    ${panel('Japan vs peer', compareTable(['NY.GDP.PCAP.CD', 'SP.DYN.LE00.IN', 'FP.CPI.TOTL.ZG', 'SL.UEM.TOTL.ZS', 'EN.GHG.CO2.PC.CE.AR5', 'EG.ELC.RNEW.ZS'], state.compareCountry), [WDI, 'Latest year shown in each row'], 'span-4')}
+    ${panel(`${metric.label} · top ${rows.length}`, table([sortButton(state, 'rank', '#'), sortButton(state, 'name', 'Prefecture'), sortButton(state, 'region', 'Region'), sortButton(state, 'value', metric.short), sortButton(state, 'code', 'Population'), '<span>Average age</span>'], body, 'rank-table'), [CENSUS, '2020 · 2015 comparison for change metric'], 'span-7')}
+    ${panel('Japan vs peer', compareTable(['NY.GDP.PCAP.CD', 'SP.DYN.LE00.IN', 'FP.CPI.TOTL.ZG', 'SL.UEM.TOTL.ZS', 'EN.GHG.CO2.PC.CE.AR5', 'EG.ELC.RNEW.ZS'], state.compareCountry), [WDI, 'Latest year shown in each row'], 'span-5')}
     ${panel('Income and longevity across 15 countries', scatter(['NY.GDP.PCAP.CD', 'SP.DYN.LE00.IN'], state.compareCountry), [WDI, `GDP per person ${latest('NY.GDP.PCAP.CD')[0]} · life expectancy ${latest('SP.DYN.LE00.IN')[0]}`], 'span-7')}
     ${panel('Export current league', `<div class="button-row"><button type="button" class="btn" data-download="ranking" data-format="csv">Download CSV</button><button type="button" class="btn ghost" data-download="ranking" data-format="json">Download JSON</button></div><p class="prose">Exports follow the metric, region, search and order shown above.</p>`, [CENSUS, '2020'], 'span-5')}
   </div>`;
